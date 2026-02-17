@@ -1,10 +1,8 @@
 name: Docker
 
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
-  # 修改：增加手动触发时的输入框
+  # 彻底移除 push 和 pull_request 触发器
+  # 仅保留手动触发
   workflow_dispatch:
     inputs:
       commit_sha:
@@ -33,7 +31,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # 修改：如果输入了 commit_sha 就签出指定的版本，否则签出默认分支
+          # 如果输入了 commit_sha 就签出指定的版本，否则签出当前分支
           ref: ${{ github.event.inputs.commit_sha || github.ref }}
 
       - name: Set up Docker Buildx
@@ -53,17 +51,13 @@ jobs:
           set -euo pipefail
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           
-          # 如果是手动触发且输入了 commit，我们给镜像打个特殊的标签方便区分
+          # 手动触发时，统一打上 latest 标签，如果提供了 commit 则额外加上 sha 标签
           if [[ -n "${{ github.event.inputs.commit_sha }}" ]]; then
-            SHORT_SHA=$(echo "${{ github.event.inputs.commit_sha }}" | cut -c1-12)
-            TAGS="${IMAGE}:custom-${SHORT_SHA},${IMAGE}:latest"
-          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            TAG_NAME="${GITHUB_REF#refs/tags/}"
-            TAGS="${IMAGE}:${TAG_NAME},${IMAGE}:sha-${GITHUB_SHA::12}"
+            SHORT_SHA=$(echo "${{ github.event.inputs.commit_sha }}" | cut -c1-7)
+            TAGS="${IMAGE}:latest,${IMAGE}:${SHORT_SHA}"
           else
-            TAGS="${IMAGE}:latest,${IMAGE}:sha-${GITHUB_SHA::12}"
+            TAGS="${IMAGE}:latest"
           fi
-          
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
@@ -73,5 +67,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           platforms: linux/amd64
+          # 使用缓存减少后续手动构建的时间
           cache-from: type=gha
           cache-to: type=gha,mode=max
