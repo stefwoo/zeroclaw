@@ -4,7 +4,13 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-  workflow_dispatch: # 允许你手动点击 "Run workflow" 触发构建
+  # 修改：增加手动触发时的输入框
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: '想要构建的 Commit SHA (留空则使用当前分支最新代码)'
+        required: false
+        default: ''
 
 concurrency:
   group: docker-${{ github.ref }}
@@ -12,23 +18,24 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  # 这会自动识别为你自己的 "用户名/项目名"
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   publish:
     name: Build and Push Docker Image
-    runs-on: ubuntu-latest # 切换为 GitHub 官方免费服务器
-    timeout-minutes: 60    # Rust 编译较慢，给足时间
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
-      packages: write      # 必须有这个权限才能推送到 GHCR
+      packages: write
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # 修改：如果输入了 commit_sha 就签出指定的版本，否则签出默认分支
+          ref: ${{ github.event.inputs.commit_sha || github.ref }}
 
-      # 设置 Docker Buildx（官方推荐，支持多平台构建）
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -45,28 +52,26 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-          SHA_TAG="${IMAGE}:sha-${GITHUB_SHA::12}"
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+          
+          # 如果是手动触发且输入了 commit，我们给镜像打个特殊的标签方便区分
+          if [[ -n "${{ github.event.inputs.commit_sha }}" ]]; then
+            SHORT_SHA=$(echo "${{ github.event.inputs.commit_sha }}" | cut -c1-12)
+            TAGS="${IMAGE}:custom-${SHORT_SHA},${IMAGE}:latest"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             TAG_NAME="${GITHUB_REF#refs/tags/}"
-            TAGS="${IMAGE}:${TAG_NAME},${SHA_TAG}"
-          elif [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            TAGS="${IMAGE}:latest,${SHA_TAG}"
+            TAGS="${IMAGE}:${TAG_NAME},${IMAGE}:sha-${GITHUB_SHA::12}"
           else
-            BRANCH_NAME="${GITHUB_REF#refs/heads/}"
-            BRANCH_NAME="${BRANCH_NAME//\//-}"
-            TAGS="${IMAGE}:${BRANCH_NAME},${SHA_TAG}"
+            TAGS="${IMAGE}:latest,${IMAGE}:sha-${GITHUB_SHA::12}"
           fi
+          
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
 
-      # 使用官方的构建 Action 替换 Blacksmith
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          # 默认只构建 amd64 以加快速度，如果你需要 arm64(如树莓派)，可以改为 linux/amd64,linux/arm64
           platforms: linux/amd64
-          # 开启缓存，下次构建 Rust 项目会快很多
           cache-from: type=gha
           cache-to: type=gha,mode=max
