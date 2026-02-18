@@ -1,8 +1,6 @@
 name: Docker
 
 on:
-  # 彻底移除 push 和 pull_request 触发器
-  # 仅保留手动触发
   workflow_dispatch:
     inputs:
       commit_sha:
@@ -31,7 +29,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # 如果输入了 commit_sha 就签出指定的版本，否则签出当前分支
           ref: ${{ github.event.inputs.commit_sha || github.ref }}
 
       - name: Set up Docker Buildx
@@ -50,8 +47,6 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-          
-          # 手动触发时，统一打上 latest 标签，如果提供了 commit 则额外加上 sha 标签
           if [[ -n "${{ github.event.inputs.commit_sha }}" ]]; then
             SHORT_SHA=$(echo "${{ github.event.inputs.commit_sha }}" | cut -c1-7)
             TAGS="${IMAGE}:latest,${IMAGE}:${SHORT_SHA}"
@@ -67,6 +62,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           platforms: linux/amd64
-          # 使用缓存减少后续手动构建的时间
+          # --- 核心改动：构建目标切换为 dev ---
+          target: dev 
+          # -------------------------------
           cache-from: type=gha
           cache-to: type=gha,mode=max
